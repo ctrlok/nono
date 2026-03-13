@@ -49,7 +49,7 @@ pub struct Group {
     /// If set, this group only applies on the specified platform
     #[serde(default)]
     pub platform: Option<String>,
-    /// If true, this group cannot be removed via trust_groups
+    /// If true, this group cannot be removed via group exclusions
     #[serde(default)]
     pub required: bool,
     /// Allow operations
@@ -94,11 +94,11 @@ pub struct DenyOps {
     pub commands: Vec<String>,
 }
 
-/// Profile definition as stored in policy.json
+/// Profile definition as stored in policy.json.
 ///
-/// Separate from `profile::Profile` because in JSON `trust_groups` lives at the
-/// profile level and `security.groups` means "additional groups on top of base",
-/// not the complete merged list.
+/// Separate from `profile::Profile` because built-in policy profiles allow
+/// profile-level group exclusion fields, while `security.groups` means
+/// "additional groups on top of base", not the complete merged list.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ProfileDef {
     #[serde(default)]
@@ -107,7 +107,12 @@ pub struct ProfileDef {
     pub meta: profile::ProfileMeta,
     #[serde(default)]
     pub security: profile::SecurityConfig,
-    /// Base groups to exclude for this profile
+    /// Preferred built-in profile exclusions.
+    #[serde(default)]
+    pub exclude_groups: Vec<String>,
+    /// Deprecated legacy built-in profile exclusions.
+    /// Kept for backward-compatible deserialization of embedded/user-authored
+    /// policy JSON that still uses `trust_groups`.
     #[serde(default)]
     pub trust_groups: Vec<String>,
     #[serde(default)]
@@ -135,19 +140,22 @@ pub struct ProfileDef {
 impl ProfileDef {
     /// Convert to a raw Profile without merging base_groups.
     pub fn to_raw_profile(&self) -> profile::Profile {
+        let mut policy = self.policy.clone();
+        let combined = profile::dedup_append(&self.exclude_groups, &self.trust_groups);
+        policy.exclude_groups = profile::dedup_append(&combined, &self.policy.exclude_groups);
         profile::Profile {
             extends: self.extends.clone(),
             meta: self.meta.clone(),
             security: profile::SecurityConfig {
                 groups: self.security.groups.clone(),
-                trust_groups: self.trust_groups.clone(),
+                trust_groups: Vec::new(),
                 allowed_commands: self.security.allowed_commands.clone(),
                 signal_mode: self.security.signal_mode,
                 process_info_mode: self.security.process_info_mode,
                 capability_elevation: self.security.capability_elevation,
             },
             filesystem: self.filesystem.clone(),
-            policy: self.policy.clone(),
+            policy,
             network: self.network.clone(),
             env_credentials: self.env_credentials.clone(),
             workdir: self.workdir.clone(),
@@ -979,14 +987,9 @@ pub fn validate_group_exclusions(policy: &Policy, excluded_groups: &[String]) ->
         .join(", ");
 
     Err(NonoError::ConfigParse(format!(
-        "Cannot exclude required groups via trust_groups: {}",
+        "Cannot exclude required groups: {}",
         names
     )))
-}
-
-/// Backward-compatible validator name for existing trust_groups callers.
-pub fn validate_trust_groups(policy: &Policy, trust_groups: &[String]) -> Result<()> {
-    validate_group_exclusions(policy, trust_groups)
 }
 
 /// Get a built-in profile from embedded policy.json.
@@ -1695,16 +1698,16 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_trust_groups_allows_non_required() {
+    fn test_validate_group_exclusions_allows_non_required() {
         let policy = load_policy(sample_policy_json()).expect("parse failed");
-        let result = validate_trust_groups(&policy, &["test_read".to_string()]);
+        let result = validate_group_exclusions(&policy, &["test_read".to_string()]);
         assert!(result.is_ok(), "Non-required group should be removable");
     }
 
     #[test]
-    fn test_validate_trust_groups_rejects_required() {
+    fn test_validate_group_exclusions_rejects_required() {
         let policy = load_policy(sample_policy_json()).expect("parse failed");
-        let result = validate_trust_groups(&policy, &["test_required".to_string()]);
+        let result = validate_group_exclusions(&policy, &["test_required".to_string()]);
         assert!(result.is_err(), "Required group must not be removable");
         let err = result.expect_err("expected error");
         assert!(
@@ -1715,13 +1718,38 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_trust_groups_ignores_unknown() {
+    fn test_validate_group_exclusions_ignores_unknown() {
         let policy = load_policy(sample_policy_json()).expect("parse failed");
-        let result = validate_trust_groups(&policy, &["nonexistent_group".to_string()]);
+        let result = validate_group_exclusions(&policy, &["nonexistent_group".to_string()]);
         assert!(
             result.is_ok(),
             "Unknown groups should not trigger required check"
         );
+    }
+
+    #[test]
+    fn test_profile_def_to_raw_profile_combines_exclude_groups() {
+        let def = ProfileDef {
+            exclude_groups: vec!["preferred".to_string()],
+            trust_groups: vec!["legacy".to_string()],
+            policy: profile::PolicyPatchConfig {
+                exclude_groups: vec!["policy".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let raw = def.to_raw_profile();
+
+        assert_eq!(
+            raw.policy.exclude_groups,
+            vec![
+                "preferred".to_string(),
+                "legacy".to_string(),
+                "policy".to_string()
+            ]
+        );
+        assert!(raw.security.trust_groups.is_empty());
     }
 
     #[cfg(target_os = "linux")]

@@ -11,6 +11,7 @@ use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 // Re-export InjectMode from nono-proxy for use in profiles
 pub use nono_proxy::config::InjectMode;
@@ -687,11 +688,9 @@ pub struct SecurityConfig {
     /// Policy group names to resolve (from policy.json)
     #[serde(default)]
     pub groups: Vec<String>,
-    /// Base groups to exclude for this profile (overrides base policy).
-    /// Populated during deserialization and consumed during base-group merging.
-    /// Will also be consumed by `--trust-group` CLI flag handling.
+    /// Deprecated legacy exclusions. Prefer `policy.exclude_groups`.
+    /// Kept for backward-compatible deserialization and merge behavior.
     #[serde(default)]
-    #[allow(dead_code)]
     pub trust_groups: Vec<String>,
     /// Commands to allow even when blocked by default policy (e.g. `["rm"]`).
     /// Applied before CLI `--allow-command` overrides.
@@ -847,6 +846,17 @@ pub fn load_profile_from_path(path: &Path) -> Result<Profile> {
 
 /// Resolve inheritance and apply base-group merging for a raw profile.
 pub(crate) fn finalize_profile(mut profile: Profile) -> Result<Profile> {
+    if !profile.security.trust_groups.is_empty() {
+        let profile_name = if profile.meta.name.is_empty() {
+            "<unnamed>"
+        } else {
+            profile.meta.name.as_str()
+        };
+        warn!(
+            "profile '{}' uses deprecated security.trust_groups; use policy.exclude_groups instead",
+            profile_name
+        );
+    }
     merge_base_groups(&mut profile)?;
     Ok(profile)
 }
@@ -861,16 +871,18 @@ pub(crate) fn resolve_and_finalize_profile(profile: Profile) -> Result<Profile> 
 /// User profiles loaded from file only declare their own groups in
 /// `security.groups`. Built-in profiles also resolve through the same raw
 /// profile pipeline before base_groups are merged.
-/// This function applies: `(base_groups - trust_groups) + profile.groups`.
+/// This function applies: `((base_groups + profile.groups) - effective_exclusions)`.
+///
+/// This means exclusions win even if the same group is also added explicitly in
+/// `security.groups`. That is an intentional shift toward a single, consistent
+/// exclusion model as `trust_groups` is deprecated.
 fn merge_base_groups(profile: &mut Profile) -> Result<()> {
     let policy = crate::policy::load_embedded_policy()?;
-    crate::policy::validate_trust_groups(&policy, &profile.security.trust_groups)?;
+    let exclusions = effective_group_exclusions(profile);
+    crate::policy::validate_group_exclusions(&policy, &exclusions)?;
 
     let base = policy.base_groups;
-    let mut merged: Vec<String> = base
-        .into_iter()
-        .filter(|g| !profile.security.trust_groups.contains(g))
-        .collect();
+    let mut merged: Vec<String> = base;
     // Append profile-specific groups (avoiding duplicates)
     let mut seen: std::collections::HashSet<String> = merged.iter().cloned().collect();
     for g in &profile.security.groups {
@@ -878,8 +890,20 @@ fn merge_base_groups(profile: &mut Profile) -> Result<()> {
             merged.push(g.clone());
         }
     }
+    if !exclusions.is_empty() {
+        let exclude_set: std::collections::HashSet<&String> = exclusions.iter().collect();
+        merged.retain(|g| !exclude_set.contains(g));
+    }
     profile.security.groups = merged;
     Ok(())
+}
+
+/// Merge legacy `security.trust_groups` with preferred `policy.exclude_groups`.
+pub(crate) fn effective_group_exclusions(profile: &Profile) -> Vec<String> {
+    dedup_append(
+        &profile.security.trust_groups,
+        &profile.policy.exclude_groups,
+    )
 }
 
 /// Parse a profile JSON file without resolving inheritance.
@@ -1099,7 +1123,7 @@ fn merge_profiles(base: Profile, child: Profile) -> Profile {
 }
 
 /// Append child items after base items, deduplicating while preserving order.
-fn dedup_append<T: Eq + std::hash::Hash + Clone>(base: &[T], child: &[T]) -> Vec<T> {
+pub(crate) fn dedup_append<T: Eq + std::hash::Hash + Clone>(base: &[T], child: &[T]) -> Vec<T> {
     let mut seen = std::collections::HashSet::with_capacity(base.len() + child.len());
     let mut result = Vec::with_capacity(base.len() + child.len());
     for item in base.iter().chain(child.iter()) {
@@ -1527,13 +1551,38 @@ mod tests {
 
         merge_base_groups(&mut profile).expect("merge should succeed");
 
-        // trust_groups should be excluded
+        // Legacy trust_groups exclusions should still be honored.
         assert!(
             !profile
                 .security
                 .groups
                 .contains(&"dangerous_commands".to_string()),
             "trusted group 'dangerous_commands' should be excluded"
+        );
+    }
+
+    #[test]
+    fn test_merge_base_groups_respects_policy_exclude_groups() {
+        let mut profile = Profile {
+            security: SecurityConfig {
+                groups: vec!["node_runtime".to_string()],
+                ..Default::default()
+            },
+            policy: PolicyPatchConfig {
+                exclude_groups: vec!["dangerous_commands".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        merge_base_groups(&mut profile).expect("merge should succeed");
+
+        assert!(
+            !profile
+                .security
+                .groups
+                .contains(&"dangerous_commands".to_string()),
+            "excluded group 'dangerous_commands' should be removed"
         );
     }
 
@@ -2365,6 +2414,18 @@ mod tests {
             .security
             .trust_groups
             .contains(&"child_trust".to_string()));
+    }
+
+    #[test]
+    fn test_effective_group_exclusions_combines_legacy_and_policy_fields() {
+        let mut profile = Profile::default();
+        profile.security.trust_groups = vec!["legacy_exclusion".to_string()];
+        profile.policy.exclude_groups = vec!["new_exclusion".to_string()];
+
+        let exclusions = effective_group_exclusions(&profile);
+
+        assert!(exclusions.contains(&"legacy_exclusion".to_string()));
+        assert!(exclusions.contains(&"new_exclusion".to_string()));
     }
 
     #[test]
