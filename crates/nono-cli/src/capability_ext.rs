@@ -183,7 +183,7 @@ impl CapabilitySetExt for CapabilitySet {
         }
 
         for cmd in &args.block_command {
-            caps.add_blocked_command(cmd.clone());
+            caps.add_blocked_command(cmd);
         }
 
         finalize_caps(&mut caps, &mut resolved, &loaded_policy, args, &[])?;
@@ -312,6 +312,10 @@ impl CapabilitySetExt for CapabilitySet {
                 ))
             })?;
             policy::add_deny_access_rules(path_str, &mut caps, &mut resolved.deny_paths)?;
+        }
+
+        for cmd in &profile.policy.add_deny_commands {
+            caps.add_blocked_command(cmd);
         }
 
         // Network blocking or proxy mode from profile
@@ -503,7 +507,7 @@ fn add_cli_overrides(caps: &mut CapabilitySet, args: &SandboxArgs) -> Result<()>
     }
 
     for cmd in &args.block_command {
-        caps.add_blocked_command(cmd.clone());
+        caps.add_blocked_command(cmd);
     }
 
     Ok(())
