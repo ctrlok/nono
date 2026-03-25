@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.24.0] - 2026-03-25
+
+### Documentation
+
+- Add documentation for add_deny_commands (#495) ([#495](https://github.com/always-further/nono/pull/495))
+
+- Update GitHub Action badge to agent-sign (#494) ([#494](https://github.com/always-further/nono/pull/494))
+
+
+### Features
+
+- *(sandbox/linux)* Add seccomp fallback for network  (#496) ([#496](https://github.com/always-further/nono/pull/496))
+
 ## [0.23.1] - 2026-03-25
 
 ### Bug Fixes
