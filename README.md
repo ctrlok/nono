@@ -35,8 +35,6 @@
 > - **Packages & Skills:** A system for customized hooks, skills, and scripts for Coding Agents — with a community registry or any git repo as a source. [#459](https://github.com/always-further/nono/issues/459)
 > - **Policy:** Work continues to make everything fully composable and group-based. [#446](https://github.com/always-further/nono/issues/446)
 
-> [!NOTE]
-> See our [latest release](https://github.com/always-further/nono/releases/latest) or [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 AI agents get filesystem access, run shell commands, and are wide open to prompt injections. The standard response is guardrails and policies. The problem is that policies can be bypassed — and guardrails can be talked out of.
 
@@ -76,6 +74,9 @@ nono run --profile custom-profile -- node agent.js
 ```
 
 Built-in profiles for [Claude Code](https://docs.nono.sh/cli/clients/claude-code), [Codex](https://docs.nono.sh/cli/clients/codex), [OpenCode](https://docs.nono.sh/cli/clients/opencode), [OpenClaw](https://docs.nono.sh/cli/clients/openclaw), and [Swival](https://docs.nono.sh/cli/clients/swival) — or define your own with custom permissions.
+
+> [!NOTE]
+> See our [latest release](https://github.com/always-further/nono/releases/latest) or [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 ## Library
 
