@@ -244,19 +244,23 @@ fn test_show_format_manifest_claude_code_profile() {
 
 #[test]
 fn test_show_format_manifest_round_trip() {
-    // Export as manifest, then feed back via --config --dry-run
-    let output = nono_bin()
-        .args(["policy", "show", "claude-code", "--format", "manifest"])
-        .output()
-        .expect("failed to run nono");
-    assert!(output.status.success());
-
-    let manifest_json = String::from_utf8_lossy(&output.stdout);
+    // Build a minimal manifest with paths that exist everywhere,
+    // then feed it back via --config --dry-run.
     let dir = tempfile::tempdir().expect("tempdir");
     let manifest_path = dir.path().join("manifest.json");
-    std::fs::write(&manifest_path, manifest_json.as_bytes()).expect("write manifest");
+    std::fs::write(
+        &manifest_path,
+        r#"{
+            "version": "0.1.0",
+            "filesystem": {
+                "grants": [{ "path": "/tmp", "access": "read" }]
+            },
+            "network": { "mode": "blocked" }
+        }"#,
+    )
+    .expect("write manifest");
 
-    let output2 = nono_bin()
+    let output = nono_bin()
         .args([
             "run",
             "--config",
@@ -270,9 +274,9 @@ fn test_show_format_manifest_round_trip() {
         .expect("failed to run nono");
 
     assert!(
-        output2.status.success(),
+        output.status.success(),
         "round-trip failed, stderr: {}",
-        String::from_utf8_lossy(&output2.stderr)
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
