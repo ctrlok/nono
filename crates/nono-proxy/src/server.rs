@@ -241,23 +241,33 @@ pub async fn start(config: ProxyConfig) -> Result<ProxyHandle> {
     // Non-credential hosts bypass the proxy (direct connection, still
     // Landlock-enforced). Credential upstreams must go through the proxy
     // for L7 path filtering and credential injection.
-    let credential_hosts = credential_store.credential_upstream_hosts();
-    let no_proxy_hosts: Vec<String> = config
-        .allowed_hosts
-        .iter()
-        .filter(|host| {
-            let normalised = {
-                let h = host.to_lowercase();
-                if h.contains(':') {
-                    h
-                } else {
-                    format!("{}:443", h)
-                }
-            };
-            !credential_hosts.contains(&normalised)
-        })
-        .cloned()
-        .collect();
+    //
+    // On macOS this MUST be empty: Seatbelt's ProxyOnly mode generates
+    // `(deny network*) (allow network-outbound (remote tcp "localhost:PORT"))`
+    // which blocks ALL direct outbound. Tools that respect NO_PROXY would
+    // attempt direct connections that the sandbox denies (DNS lookup fails).
+    // All traffic must route through the proxy on macOS. See #580.
+    let no_proxy_hosts: Vec<String> = if cfg!(target_os = "macos") {
+        Vec::new()
+    } else {
+        let credential_hosts = credential_store.credential_upstream_hosts();
+        config
+            .allowed_hosts
+            .iter()
+            .filter(|host| {
+                let normalised = {
+                    let h = host.to_lowercase();
+                    if h.contains(':') {
+                        h
+                    } else {
+                        format!("{}:443", h)
+                    }
+                };
+                !credential_hosts.contains(&normalised)
+            })
+            .cloned()
+            .collect()
+    };
 
     if !no_proxy_hosts.is_empty() {
         debug!("Smart NO_PROXY bypass hosts: {:?}", no_proxy_hosts);
