@@ -216,7 +216,12 @@ pub(super) fn handle_seccomp_notification(
     // resolves to /proc/<tgid>/... for grandchild processes (e.g. nono→sh→bun).
     // notif.pid is the TID; for single-threaded processes TID==TGID, but for
     // multithreaded or grandchild processes we need the actual process leader PID.
-    let notifying_tgid = read_tgid(notif.pid);
+    let child_pid = child.as_raw() as u32;
+    let notifying_tgid = if notif.pid == child_pid {
+        child_pid
+    } else {
+        read_tgid(notif.pid)
+    };
     let procfs_context = ProcfsAccessContext::new(notifying_tgid, Some(notif.pid));
     let resolved_path = match resolve_procfs_path_for_child(&path, Some(procfs_context)) {
         Ok(resolved) => resolved,
@@ -238,17 +243,17 @@ pub(super) fn handle_seccomp_notification(
     // opened by open_path_for_access continues to use `procfs_context` with notifying_tgid,
     // so the correct /proc/<notifying_tgid>/... file is opened. validate_procfs_access also
     // uses notifying_tgid as allowed_pid, blocking cross-process procfs reads.
-    let child_pid = child.as_raw() as u32;
-    let cap_check_path = if notifying_tgid != child_pid {
-        let notifying_prefix = std::path::PathBuf::from(format!("/proc/{}", notifying_tgid));
-        let child_prefix = std::path::PathBuf::from(format!("/proc/{}", child_pid));
+    let cap_check_path: std::borrow::Cow<std::path::Path> = if notifying_tgid != child_pid {
+        let notifying_prefix = format!("/proc/{}", notifying_tgid);
         if let Ok(rel) = canonicalized.strip_prefix(&notifying_prefix) {
-            child_prefix.join(rel)
+            let mut p = std::path::PathBuf::from(format!("/proc/{}", child_pid));
+            p.push(rel);
+            std::borrow::Cow::Owned(p)
         } else {
-            canonicalized.clone()
+            std::borrow::Cow::Borrowed(canonicalized.as_path())
         }
     } else {
-        canonicalized.clone()
+        std::borrow::Cow::Borrowed(canonicalized.as_path())
     };
 
     // 4. Check protected roots BEFORE initial-set fast-path.
