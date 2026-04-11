@@ -6,6 +6,7 @@ use crate::credential_runtime::load_env_credentials;
 use crate::profile;
 use crate::profile::WorkdirAccess;
 use crate::profile_runtime::prepare_profile;
+use crate::DETACHED_LAUNCH_ENV;
 use crate::{output, policy, protected_paths, sandbox_state};
 use colored::Colorize;
 use nono::{AccessMode, CapabilitySet, FsCapability, NonoError, Result, Sandbox};
@@ -235,8 +236,13 @@ pub(crate) fn print_allow_launch_services_warning(silent: bool) {
     eprintln!("  Prefer using it from a trusted directory, not inside an untrusted project.");
 }
 
+fn missing_cwd_prompt_must_fail(silent: bool, detached_launch: bool) -> bool {
+    silent || detached_launch
+}
+
 pub(crate) fn prepare_sandbox(args: &SandboxArgs, silent: bool) -> Result<PreparedSandbox> {
     sandbox_state::cleanup_stale_state_files();
+    let detached_launch = std::env::var_os(DETACHED_LAUNCH_ENV).is_some();
 
     let workdir = args
         .workdir
@@ -415,7 +421,7 @@ pub(crate) fn prepare_sandbox(args: &SandboxArgs, silent: bool) -> Result<Prepar
                 info!("Auto-including CWD with {} access (--allow-cwd)", access);
                 let cap = FsCapability::new_dir(cwd_canonical.clone(), access)?;
                 caps.add_fs(cap);
-            } else if silent {
+            } else if missing_cwd_prompt_must_fail(silent, detached_launch) {
                 return Err(NonoError::CwdPromptRequired);
             } else {
                 let confirmed = output::prompt_cwd_sharing(&cwd_canonical, &access)?;
@@ -519,5 +525,20 @@ mod tests {
                 dir.path().join("future-dir").display()
             )]
         );
+    }
+
+    #[test]
+    fn missing_cwd_prompt_fails_in_silent_mode() {
+        assert!(missing_cwd_prompt_must_fail(true, false));
+    }
+
+    #[test]
+    fn missing_cwd_prompt_fails_for_detached_launches() {
+        assert!(missing_cwd_prompt_must_fail(false, true));
+    }
+
+    #[test]
+    fn missing_cwd_prompt_can_interactively_prompt_when_attached() {
+        assert!(!missing_cwd_prompt_must_fail(false, false));
     }
 }
