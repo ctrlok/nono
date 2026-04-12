@@ -150,8 +150,13 @@ impl ProxyHandle {
             if let Some(ref env_var) = route.env_var {
                 vars.push((env_var.clone(), self.token.to_string()));
             } else if let Some(ref cred_key) = route.credential_key {
-                let api_key_name = cred_key.to_uppercase();
-                vars.push((api_key_name, self.token.to_string()));
+                // Skip URI-format keys (e.g. env://, op://, apple-password://) —
+                // uppercasing a URI produces a nonsensical env var name. These
+                // routes must declare an explicit env_var to get phantom token injection.
+                if !cred_key.contains("://") {
+                    let api_key_name = cred_key.to_uppercase();
+                    vars.push((api_key_name, self.token.to_string()));
+                }
             }
         }
         vars
