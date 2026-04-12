@@ -55,32 +55,39 @@ pub fn run_ps(args: &PsArgs) -> Result<()> {
 
     // Table header
     println!(
-        "{:<16} {:<12} {:<10} {:<10} {:<8} {:<10} {:<14} COMMAND",
+        "{:<16} {:<12} {:<12} {:<12} {:<8} {:<10} {:<14} COMMAND",
         "SESSION", "NAME", "STATUS", "ATTACH", "PID", "UPTIME", "PROFILE"
     );
 
     for session in &filtered {
         let name = session.name.as_deref().unwrap_or("-");
-        let status = match session.status {
-            SessionStatus::Running => format!("{:<10}", "running").green().to_string(),
-            SessionStatus::Paused => format!("{:<10}", "paused").yellow().to_string(),
-            SessionStatus::Exited => {
-                let code = session.exit_code.unwrap_or(-1);
-                if code == 0 {
-                    format!("{:<10}", "exited(0)")
-                } else {
-                    format!("{:<10}", format!("exited({})", code))
-                        .red()
-                        .to_string()
-                }
-            }
+        let col_width = 12;
+        let exit_code = session.exit_code.unwrap_or(-1);
+        let status_text = match session.status {
+            SessionStatus::Running => "running".to_string(),
+            SessionStatus::Paused => "paused".to_string(),
+            SessionStatus::Exited => format!("exited({exit_code})"),
         };
-        let attach = match session.status {
-            SessionStatus::Exited => format!("{:<10}", "-"),
+        let status_padded = format!("{status_text:<col_width$}");
+        let status = match session.status {
+            SessionStatus::Running => status_padded.green().to_string(),
+            SessionStatus::Paused => status_padded.yellow().to_string(),
+            SessionStatus::Exited if exit_code != 0 => status_padded.red().to_string(),
+            _ => status_padded,
+        };
+
+        let attach_text = match session.status {
+            SessionStatus::Exited => "-".to_string(),
             _ => match session.attachment {
-                SessionAttachment::Attached => format!("{:<10}", "attached").green().to_string(),
-                SessionAttachment::Detached => format!("{:<10}", "detached").yellow().to_string(),
+                SessionAttachment::Attached => "attached".to_string(),
+                SessionAttachment::Detached => "detached".to_string(),
             },
+        };
+        let attach_padded = format!("{attach_text:<col_width$}");
+        let attach = match (&session.status, &session.attachment) {
+            (SessionStatus::Exited, _) => attach_padded,
+            (_, SessionAttachment::Attached) => attach_padded.green().to_string(),
+            (_, SessionAttachment::Detached) => attach_padded.yellow().to_string(),
         };
         let pid = session.child_pid;
         let uptime = format_uptime(&session.started);
