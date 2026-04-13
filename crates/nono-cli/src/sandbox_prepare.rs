@@ -1233,6 +1233,75 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn grant_nvidia_gpu_procfs_scopes_proc_self_reads_with_task_writes() {
+        // Regression test for the NVIDIA-scoped procfs grants:
+        //   /proc/self       Read        (CUDA init reads maps/status/etc.)
+        //   /proc/self/task  ReadWrite   (driver writes task/<tid>/comm)
+        // Plus any of /proc/driver/{nvidia,nvidia-uvm} that exist.
+        //
+        // /proc/self and /proc/self/task always exist on Linux, so those
+        // checks are unconditional. /proc/driver/nvidia entries are only
+        // present when the NVIDIA kernel module is loaded, so we just
+        // assert no unexpected /proc/driver parent grant was added.
+        //
+        // FsCapability.original is used instead of path_covered_with_access:
+        // /proc/self is a symlink to /proc/<pid> which canonicalizes
+        // per-process, and we want to verify the grant intent.
+        let mut caps = CapabilitySet::default();
+        grant_nvidia_gpu_procfs(&mut caps).expect("grant_nvidia_gpu_procfs failed");
+
+        let find = |p: &str| -> Option<&nono::FsCapability> {
+            caps.fs_capabilities()
+                .iter()
+                .find(|c| c.original == std::path::Path::new(p))
+        };
+
+        let proc_self = find("/proc/self")
+            .expect("/proc/self must be granted read so CUDA init can read maps/status");
+        assert_eq!(
+            proc_self.access,
+            AccessMode::Read,
+            "/proc/self must be read-only (writes are scoped to /proc/self/task)"
+        );
+        assert!(!proc_self.is_file);
+
+        let proc_self_task = find("/proc/self/task").expect(
+            "/proc/self/task must be granted read+write so the NVIDIA driver \
+             can write task/<tid>/comm (CUDA Error 304 root cause)",
+        );
+        assert_eq!(
+            proc_self_task.access,
+            AccessMode::ReadWrite,
+            "/proc/self/task must be granted read+write"
+        );
+        assert!(!proc_self_task.is_file);
+
+        // Least-privilege regression guard: no parent /proc/driver grant.
+        // Only /proc/driver/nvidia and /proc/driver/nvidia-uvm should appear
+        // (and only when their subdirectories exist).
+        assert!(
+            find("/proc/driver").is_none(),
+            "/proc/driver must not be granted as a parent (would leak other drivers)"
+        );
+        for entry in caps.fs_capabilities() {
+            if entry.original.starts_with("/proc/driver/") {
+                let name = entry
+                    .original
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                assert!(
+                    matches!(name, "nvidia" | "nvidia-uvm"),
+                    "unexpected /proc/driver grant: {}",
+                    entry.original.display()
+                );
+                assert_eq!(entry.access, AccessMode::Read);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn nvidia_compute_device_predicate_rejects_non_compute_and_unknown() {
         for name in [
             "nvidia",           // bare prefix, no digits
