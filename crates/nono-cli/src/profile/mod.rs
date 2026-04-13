@@ -350,7 +350,7 @@ fn validate_proxy_override(name: &str, cred: &CustomCredentialDef) -> Result<()>
     let mode = proxy.inject_mode.as_ref().unwrap_or(&cred.inject_mode);
 
     match mode {
-        InjectMode::Header => {
+        InjectMode::Header | InjectMode::BasicAuth => {
             let header = proxy
                 .inject_header
                 .as_deref()
@@ -369,16 +369,18 @@ fn validate_proxy_override(name: &str, cred: &CustomCredentialDef) -> Result<()>
                 )));
             }
 
-            let format = proxy
-                .credential_format
-                .as_deref()
-                .unwrap_or(cred.credential_format.as_str());
-            if format.contains('\r') || format.contains('\n') {
-                return Err(NonoError::ProfileParse(format!(
-                    "proxy.credential_format for custom credential '{}' contains invalid CRLF characters; \
-                     this could enable header injection attacks",
-                    name
-                )));
+            if *mode == InjectMode::Header {
+                let format = proxy
+                    .credential_format
+                    .as_deref()
+                    .unwrap_or(cred.credential_format.as_str());
+                if format.contains('\r') || format.contains('\n') {
+                    return Err(NonoError::ProfileParse(format!(
+                        "proxy.credential_format for custom credential '{}' contains invalid CRLF characters; \
+                         this could enable header injection attacks",
+                        name
+                    )));
+                }
             }
         }
         InjectMode::UrlPath => {
@@ -450,25 +452,6 @@ fn validate_proxy_override(name: &str, cred: &CustomCredentialDef) -> Result<()>
                     "proxy.query_param_name '{}' for custom credential '{}' must contain only \
                      alphanumeric characters, underscores, and hyphens",
                     param_name, name
-                )));
-            }
-        }
-        InjectMode::BasicAuth => {
-            let header = proxy
-                .inject_header
-                .as_deref()
-                .unwrap_or(cred.inject_header.as_str());
-            if header.is_empty() {
-                return Err(NonoError::ProfileParse(format!(
-                    "proxy.inject_header for custom credential '{}' cannot be empty",
-                    name
-                )));
-            }
-            if !header.chars().all(is_http_token_char) {
-                return Err(NonoError::ProfileParse(format!(
-                    "proxy.inject_header '{}' for custom credential '{}' contains invalid characters; \
-                     header names must be valid HTTP tokens (alphanumeric and !#$%&'*+-.^_`|~)",
-                    header, name
                 )));
             }
         }
