@@ -274,18 +274,25 @@ pub(crate) fn escape_seatbelt_path(path: &str) -> Result<String> {
     Ok(result)
 }
 
-fn escape_seatbelt_regex_path(path: &str) -> String {
+fn escape_seatbelt_regex_path(path: &str) -> Result<String> {
     let mut out = String::with_capacity(path.len() + 8);
     for c in path.chars() {
+        if c.is_control() {
+            return Err(NonoError::ConfigParse(format!(
+                "Path contains control character: {:?}",
+                path
+            )));
+        }
         match c {
             '.' | '+' | '*' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '^' | '$' | '\\' => {
                 out.push('\\');
                 out.push(c);
             }
+            '"' => out.push_str("\\\""),
             _ => out.push(c),
         }
     }
-    out
+    Ok(out)
 }
 
 // ============================================================================
@@ -812,7 +819,17 @@ pub fn apply_macos_keychain_db_exception(caps: &mut CapabilitySet) {
                 continue;
             }
         };
-        let escaped_root = escape_seatbelt_regex_path(root_str);
+        let escaped_root = match escape_seatbelt_regex_path(root_str) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    "Skipping keychain runtime exception for {}: {}",
+                    root.display(),
+                    e
+                );
+                continue;
+            }
+        };
         let filters = [
             format!(r#"regex #"^{}/\.fl[0-9A-Fa-f]+$""#, escaped_root),
             format!(
@@ -836,6 +853,8 @@ pub fn apply_macos_keychain_db_exception(caps: &mut CapabilitySet) {
             }
         }
     }
+
+    allow_rules.sort_unstable();
 
     for rule in allow_rules {
         if let Err(e) = caps.add_platform_rule(rule) {
@@ -2013,6 +2032,33 @@ mod tests {
     }
 
     #[test]
+    fn test_escape_seatbelt_regex_path() {
+        assert_eq!(
+            escape_seatbelt_regex_path("/simple/path").expect("simple path"),
+            "/simple/path"
+        );
+        assert_eq!(
+            escape_seatbelt_regex_path("/path.with+regex?(chars)").expect("regex chars"),
+            "/path\\.with\\+regex\\?\\(chars\\)"
+        );
+        assert_eq!(
+            escape_seatbelt_regex_path("/path\"quoted").expect("quote"),
+            "/path\\\"quoted"
+        );
+    }
+
+    #[test]
+    fn test_escape_seatbelt_regex_path_rejects_control_chars() {
+        assert!(escape_seatbelt_regex_path("/path\nwith\nnewlines").is_err());
+        assert!(escape_seatbelt_regex_path("/path\rwith\rreturns").is_err());
+        assert!(escape_seatbelt_regex_path("/path\0with\0nulls").is_err());
+        assert!(escape_seatbelt_regex_path("/path\twith\ttabs").is_err());
+        assert!(escape_seatbelt_regex_path("/path\x0bwith\x0cfeeds").is_err());
+        assert!(escape_seatbelt_regex_path("/path\x1bwith\x1bescape").is_err());
+        assert!(escape_seatbelt_regex_path("/path\x7fwith\x7fdel").is_err());
+    }
+
+    #[test]
     fn test_validate_deny_overlaps_detects_conflict() {
         use nono::FsCapability;
 
@@ -2668,7 +2714,8 @@ mod tests {
         apply_macos_keychain_db_exception(&mut caps);
 
         let escaped_root =
-            escape_seatbelt_regex_path(keychains.to_str().expect("keychains path utf8"));
+            escape_seatbelt_regex_path(keychains.to_str().expect("keychains path utf8"))
+                .expect("escaped regex path");
         let rules = caps.platform_rules().join("\n");
 
         assert!(
