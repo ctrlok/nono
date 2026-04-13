@@ -685,14 +685,16 @@ pub(crate) fn prepare_sandbox(args: &SandboxArgs, silent: bool) -> Result<Prepar
                         "Failed to move ~/.claude.json to ~/.claude/claude.json: {}",
                         e
                     );
-                } else if let Err(e) = std::os::unix::fs::symlink(&redirect_target, &claude_json) {
+                } else if let Err(e) =
+                    std::os::unix::fs::symlink(".claude/claude.json", &claude_json)
+                {
                     warn!("Failed to create ~/.claude.json symlink: {}", e);
                 }
             } else {
                 // File doesn't exist yet — pre-create the target so the
                 // sandbox can attach a path rule to it, then symlink.
                 precreate(&redirect_target, false);
-                if let Err(e) = std::os::unix::fs::symlink(&redirect_target, &claude_json) {
+                if let Err(e) = std::os::unix::fs::symlink(".claude/claude.json", &claude_json) {
                     if e.kind() != std::io::ErrorKind::AlreadyExists {
                         warn!("Failed to create ~/.claude.json symlink: {}", e);
                     }
