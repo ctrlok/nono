@@ -742,8 +742,8 @@ mod tests {
             workflow: "gitlab.com/my-group/my-project//pipelines/release.yml@refs/tags/v1.0.0"
                 .to_string(),
             git_ref: "refs/tags/v1.0.0".to_string(),
-            build_signer_uri: "gitlab.com/my-group/my-project//pipelines/release.yml@refs/tags/v1.0.0"
-                .to_string(),
+            build_signer_uri:
+                "gitlab.com/my-group/my-project//pipelines/release.yml@refs/tags/v1.0.0".to_string(),
         };
         assert!(publisher.matches(&identity));
     }
